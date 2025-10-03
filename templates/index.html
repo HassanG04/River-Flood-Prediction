@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>River Flood Prediction</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <!-- Default to dark on first paint (then honor saved choice) -->
+  <script>
+    (function () {
+      const saved = localStorage.getItem('theme');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const theme = saved || (prefersDark ? 'dark' : 'dark'); // default = dark
+      document.documentElement.classList.add(theme === 'light' ? 'theme-light' : 'theme-dark');
+    })();
+  </script>
+</head>
+<body>
+  <!-- NAVBAR -->
+  <nav class="navbar">
+    <div class="nav-left">
+      <span class="brand">River Flood AI</span>
+    </div>
+    <div class="nav-right">
+      <!-- Info button -->
+      <button id="infoBtn" class="icon-btn" aria-haspopup="dialog" aria-controls="infoModal" aria-label="About this site">
+        <svg class="icon info" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 2a10 10 0 100 20 10 10 0 000-20Zm1 15h-2v-6h2v6Zm0-8h-2V7h2v2Z"/>
+        </svg>
+      </button>
+      <!-- Theme toggle -->
+      <button id="themeToggle" class="icon-btn" aria-label="Toggle dark/light">
+        <svg class="icon sun" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.48 0l1.79-1.8 1.41 1.41-1.8 1.79-1.4-1.4zM12 4V1h-0v3h0zm0 19v-3h0v3h0zM4 12H1v0h3v0zm19 0h-3v0h3v0zM6.76 19.16l-1.42 1.42-1.79-1.8 1.41-1.41 1.8 1.79zM19.16 17.24l1.4 1.4-1.79 1.8-1.41-1.41 1.8-1.79zM12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+        <svg class="icon moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <!-- INFO MODAL -->
+  <div id="infoModal" class="modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="infoTitle">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card" role="document">
+      <h2 id="infoTitle">About this site</h2>
+      <p>
+        This website analyzes a satellite image of rivers and predicts whether there’s a flood or not.
+        Upload an image, and the model highlights predicted flood areas and shows a clear FLOOD / NO FLOOD indicator.
+      </p>
+      <div class="modal-actions">
+        <button id="closeInfo" class="btn">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <main class="page">
+    <header class="page-header">
+      <h1>River Flood Prediction</h1>
+      <p class="sub">Upload a satellite or aerial image to detect flood extent.</p>
+      <p class="meta">
+        <b>Device:</b> {{ device }} &nbsp;|&nbsp;
+        <b>IMG_SIZE:</b> {{ img_size }} &nbsp;|&nbsp;
+        <b>Flood class:</b> {{ flood_class }} &nbsp;|&nbsp;
+        <b>Thresh:</b> {{ (threshold * 100)|round(2) }}%
+      </p>
+    </header>
+
+    <!-- ACTIONS -->
+    <section class="actions">
+      <form id="form" action="/predict_json" method="post" enctype="multipart/form-data" class="upload">
+        <label class="file">
+          <input type="file" name="file" accept="image/*,.tif,.tiff" required>
+          <span>Select image…</span>
+        </label>
+        <button type="submit" class="btn">Predict</button>
+      </form>
+
+      <div id="indicator" class="badge muted">Waiting for upload…</div>
+      <div id="metrics" class="metrics"></div>
+    </section>
+
+    <!-- RESULT -->
+    <section class="result">
+      <div id="result"></div>
+    </section>
+  </main>
+
+  <script>
+    // Theme toggle
+    const toggleBtn = document.getElementById('themeToggle');
+    toggleBtn.addEventListener('click', () => {
+      const el = document.documentElement;
+      const next = el.classList.contains('theme-dark') ? 'light' : 'dark';
+      el.classList.toggle('theme-dark', next === 'dark');
+      el.classList.toggle('theme-light', next === 'light');
+      localStorage.setItem('theme', next);
+    });
+
+    // Info modal
+    const infoBtn = document.getElementById('infoBtn');
+    const modal = document.getElementById('infoModal');
+    const closeInfo = document.getElementById('closeInfo');
+    infoBtn.addEventListener('click', () => {
+      modal.classList.add('open');
+      modal.setAttribute('aria-hidden', 'false');
+    });
+    closeInfo.addEventListener('click', () => {
+      modal.classList.remove('open');
+      modal.setAttribute('aria-hidden', 'true');
+    });
+    modal.addEventListener('click', (e) => {
+      if (e.target.classList.contains('modal-backdrop')) {
+        closeInfo.click();
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal.classList.contains('open')) closeInfo.click();
+    });
+
+    // Predict flow
+    const form = document.getElementById('form');
+    const result = document.getElementById('result');
+    const indicator = document.getElementById('indicator');
+    const metrics = document.getElementById('metrics');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const data = new FormData(form);
+      indicator.className = 'badge muted';
+      indicator.textContent = 'Running inference…';
+      metrics.textContent = '';
+      result.innerHTML = '';
+      try {
+        const resp = await fetch('/predict_json', { method:'POST', body: data });
+        const ct = resp.headers.get('content-type') || '';
+        if (!resp.ok) {
+          const msg = ct.includes('json') ? JSON.stringify(await resp.json()) : await resp.text();
+          indicator.className = 'badge error';
+          indicator.textContent = 'Upload failed';
+          metrics.textContent = msg;
+          return;
+        }
+        const j = await resp.json();
+
+        // Indicator
+        indicator.className = 'badge ' + (j.decision === 'FLOOD' ? 'warn' : 'ok');
+        indicator.textContent = j.decision;
+
+        // Metrics
+        metrics.innerHTML = `
+          <div><b>flood_area_px</b><span>${j.flood_area_px.toLocaleString()}</span></div>
+          <div><b>area_pct</b><span>${(j.area_pct*100).toFixed(2)}%</span></div>
+          <div><b>mean_flood_prob</b><span>${j.mean_flood_prob !== null ? j.mean_flood_prob.toFixed(3) : '—'}</span></div>
+          <div><b>threshold</b><span>${(j.threshold*100).toFixed(2)}%</span></div>
+        `;
+
+        // Overlay image (data URL)
+        const img = document.createElement('img');
+        img.src = j.overlay_png;
+        img.className = 'result-img';
+        img.alt = 'Predicted flood overlay';
+        result.appendChild(img);
+      } catch (err) {
+        indicator.className = 'badge error';
+        indicator.textContent = 'Network error';
+        metrics.textContent = String(err);
+      }
+    });
+  </script>
+<footer class="site-credit" aria-label="Site credits">
+  <span>made by <strong><a href="https://github.com/HassanG04">Hassan_G</a></strong></span>
+  <span>dataset from <strong><a href = "https://www.linkedin.com/company/cellula-technologies/">Cellula</a></strong></span>
+</footer>
+</body>
+
+</html>
